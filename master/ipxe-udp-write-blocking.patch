@@ -1,0 +1,176 @@
+Change UDP behaviour as syncronous
+
+Intel implementation is syncronous and some implementations require it.
+Tried to upstream but got refused
+
+Signed-off-by: Frediano Ziglio <frediano.ziglio@citrix.com>
+
+diff --git a/src/arch/i386/interface/pxe/pxe_udp.c b/src/arch/i386/interface/pxe/pxe_udp.c
+index 83c5b2a..522acae 100644
+--- a/src/arch/i386/interface/pxe/pxe_udp.c
++++ b/src/arch/i386/interface/pxe/pxe_udp.c
+@@ -11,6 +11,7 @@
+ #include <ipxe/udp.h>
+ #include <ipxe/uaccess.h>
+ #include <ipxe/process.h>
++#include <ipxe/retry.h>
+ #include <pxe.h>
+ 
+ /*
+@@ -42,6 +43,10 @@ struct pxe_udp_connection {
+ 	struct sockaddr_in local;
+ 	/** Current PXENV_UDP_READ parameter block */
+ 	struct s_PXENV_UDP_READ *pxenv_udp_read;
++	/** Current PXENV_UDP_WRITE parameter block */
++	struct s_PXENV_UDP_WRITE *pxenv_udp_write;
++	/** return from write */
++	int rc;
+ };
+ 
+ /**
+@@ -216,6 +221,74 @@ pxenv_udp_close ( struct s_PXENV_UDP_CLOSE *pxenv_udp_close ) {
+ 
+ extern int running_pvs_nbp;
+ 
++static void udp_write_expired ( struct retry_timer *timer, int over )
++{
++	struct sockaddr_in dest;
++	struct xfer_metadata meta = {
++		.src = ( struct sockaddr * ) &pxe_udp.local,
++		.dest = ( struct sockaddr * ) &dest,
++		.netdev = pxe_netdev,
++	};
++	int rc;
++	struct s_PXENV_UDP_WRITE *pxenv_udp_write = pxe_udp.pxenv_udp_write;
++	size_t len;
++	struct io_buffer *iobuf;
++	userptr_t buffer;
++
++	DBG ( "UDP timer over %d\n", over);
++
++	if ( over || !pxenv_udp_write ) {
++		/* this generate a generic failure */
++		pxe_udp.rc = -ETIME;
++		return;
++	}
++
++	/* Construct destination socket address */
++	memset ( &dest, 0, sizeof ( dest ) );
++	dest.sin_family = AF_INET;
++	dest.sin_addr.s_addr = pxenv_udp_write->ip;
++	dest.sin_port = pxenv_udp_write->dst_port;
++
++	/* FIXME: we ignore the gateway specified, since we're
++	 * confident of being able to do our own routing.  We should
++	 * probably allow for multiple gateways.
++	 */
++
++	/* Allocate and fill data buffer */
++	len = pxenv_udp_write->buffer_size;
++	iobuf = xfer_alloc_iob ( &pxe_udp.xfer, len );
++	if ( ! iobuf ) {
++		pxe_udp.rc = -ENOMEM;
++		return;
++	}
++	buffer = real_to_user ( pxenv_udp_write->buffer.segment,
++				pxenv_udp_write->buffer.offset );
++	copy_from_user ( iob_put ( iobuf, len ), buffer, 0, len );
++
++	DBG ( " %04x:%04x+%x %d->%s:%d", pxenv_udp_write->buffer.segment,
++	      pxenv_udp_write->buffer.offset, pxenv_udp_write->buffer_size,
++	      ntohs ( pxenv_udp_write->src_port ),
++	      inet_ntoa ( dest.sin_addr ),
++	      ntohs ( pxenv_udp_write->dst_port ) );
++	
++	/* Otherwise, retransmit the packet */
++	rc = xfer_deliver ( &pxe_udp.xfer, iobuf, &meta );
++
++	DBG ( "xfer_deliver result rc %d status %d\n", rc, PXENV_STATUS(rc) );
++
++	/*
++	 * This strange test detect EAGAIN error from ARP code
++	 * Errors in iPXE are encoded in a strange way and constant change based on file
++	 * and line.
++	 */
++	if ( PXENV_STATUS(rc) == PXENV_STATUS_FAILURE && ((-rc)>>24) == 6 ) {
++		start_timer ( timer );
++		return;
++	}
++
++	pxe_udp.rc = rc;
++}
++
+ /**
+  * UDP WRITE
+  *
+@@ -259,25 +332,11 @@ extern int running_pvs_nbp;
+  */
+ static PXENV_EXIT_t
+ pxenv_udp_write ( struct s_PXENV_UDP_WRITE *pxenv_udp_write ) {
+-	struct sockaddr_in dest;
+-	struct xfer_metadata meta = {
+-		.src = ( struct sockaddr * ) &pxe_udp.local,
+-		.dest = ( struct sockaddr * ) &dest,
+-		.netdev = pxe_netdev,
+-	};
+-	size_t len;
+-	struct io_buffer *iobuf;
+-	userptr_t buffer;
+ 	int rc;
++	struct retry_timer timer;
+ 
+ 	DBG ( "PXENV_UDP_WRITE\n" );
+ 
+-	/* Construct destination socket address */
+-	memset ( &dest, 0, sizeof ( dest ) );
+-	dest.sin_family = AF_INET;
+-	dest.sin_addr.s_addr = pxenv_udp_write->ip;
+-	dest.sin_port = pxenv_udp_write->dst_port;
+-
+ 	/* Detect PVS */
+ 	if ( !running_pvs_nbp && (pxenv_udp_write->src_port == htons ( 6901 ) ||
+ 	     pxenv_udp_write->dst_port == htons ( 6969 ) ) ) {
+@@ -293,31 +352,20 @@ pxenv_udp_write ( struct s_PXENV_UDP_WRITE *pxenv_udp_write ) {
+ 	if ( ! pxe_udp.local.sin_port )
+ 		pxe_udp.local.sin_port = htons ( 2069 );
+ 
+-	/* FIXME: we ignore the gateway specified, since we're
+-	 * confident of being able to do our own routing.  We should
+-	 * probably allow for multiple gateways.
+-	 */
+-
+-	/* Allocate and fill data buffer */
+-	len = pxenv_udp_write->buffer_size;
+-	iobuf = xfer_alloc_iob ( &pxe_udp.xfer, len );
+-	if ( ! iobuf ) {
+-		DBG ( " out of memory\n" );
+-		pxenv_udp_write->Status = PXENV_STATUS_OUT_OF_RESOURCES;
+-		return PXENV_EXIT_FAILURE;
+-	}
+-	buffer = real_to_user ( pxenv_udp_write->buffer.segment,
+-				pxenv_udp_write->buffer.offset );
+-	copy_from_user ( iob_put ( iobuf, len ), buffer, 0, len );
++	memset(&timer, 0, sizeof(timer));
++	timer.expired = udp_write_expired;
++	pxe_udp.rc = -EINPROGRESS;
++	pxe_udp.pxenv_udp_write = pxenv_udp_write;
+ 
+-	DBG ( " %04x:%04x+%x %d->%s:%d\n", pxenv_udp_write->buffer.segment,
+-	      pxenv_udp_write->buffer.offset, pxenv_udp_write->buffer_size,
+-	      ntohs ( pxenv_udp_write->src_port ),
+-	      inet_ntoa ( dest.sin_addr ),
+-	      ntohs ( pxenv_udp_write->dst_port ) );
+-	
+ 	/* Transmit packet */
+-	if ( ( rc = xfer_deliver ( &pxe_udp.xfer, iobuf, &meta ) ) != 0 ) {
++	start_timer_nodelay ( &timer );
++
++	while ( ( rc = pxe_udp.rc ) == -EINPROGRESS )
++		step();
++
++	pxe_udp.pxenv_udp_write = NULL;
++
++	if ( rc != 0) {
+ 		DBG ( "PXENV_UDP_WRITE could not transmit: %s\n",
+ 		      strerror ( rc ) );
+ 		pxenv_udp_write->Status = PXENV_STATUS ( rc );
