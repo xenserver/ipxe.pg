@@ -1,0 +1,161 @@
+Do not implement PXENV_UNDI_ISR_IN_GET_NEXT if NBP is from PVS
+
+The PVS Network Boot Program expects exactly one received packet.
+It retrieves this packet with a call to PROCESS, then instead of
+calling GET_NEXT repeatedly until it returns DONE, the NBP calls
+GET_NEXT only once and ignores any received packet as it assumes
+it returned DONE.
+
+To work around this, check if we are running a PVS NBP, and if so
+always return DONE when GET_NEXT is called and do not dequeue a
+packet.  There is no risk of the rx ring overflowing as PVS
+calls PROCESS in a tight loop when it has nothing else to do.
+
+To detect PVS running we check for udp ports. Looks all UDP packets
+(first is not enough). Looks if port source is 6901 or destination
+is 6969. Detect UDP and UNDI paths.
+
+Signed-off-by: Alex Zeffertt <alex.zeffertt@eu.citrix.com>
+Signed-off-by: Frediano Ziglio <frediano.ziglio@citrix.com>
+
+diff --git a/src/arch/i386/interface/pxe/pxe_udp.c b/src/arch/i386/interface/pxe/pxe_udp.c
+index 32bc39c..83c5b2a 100644
+--- a/src/arch/i386/interface/pxe/pxe_udp.c
++++ b/src/arch/i386/interface/pxe/pxe_udp.c
+@@ -214,6 +214,8 @@ pxenv_udp_close ( struct s_PXENV_UDP_CLOSE *pxenv_udp_close ) {
+ 	return PXENV_EXIT_SUCCESS;
+ }
+ 
++extern int running_pvs_nbp;
++
+ /**
+  * UDP WRITE
+  *
+@@ -268,7 +270,7 @@ pxenv_udp_write ( struct s_PXENV_UDP_WRITE *pxenv_udp_write ) {
+ 	userptr_t buffer;
+ 	int rc;
+ 
+-	DBG ( "PXENV_UDP_WRITE" );
++	DBG ( "PXENV_UDP_WRITE\n" );
+ 
+ 	/* Construct destination socket address */
+ 	memset ( &dest, 0, sizeof ( dest ) );
+@@ -276,6 +278,13 @@ pxenv_udp_write ( struct s_PXENV_UDP_WRITE *pxenv_udp_write ) {
+ 	dest.sin_addr.s_addr = pxenv_udp_write->ip;
+ 	dest.sin_port = pxenv_udp_write->dst_port;
+ 
++	/* Detect PVS */
++	if ( !running_pvs_nbp && (pxenv_udp_write->src_port == htons ( 6901 ) ||
++	     pxenv_udp_write->dst_port == htons ( 6969 ) ) ) {
++		running_pvs_nbp = 1;
++		DBG ( "detected PVS using UDP\n" );
++	}
++
+ 	/* Set local (source) port.  PXE spec says source port is 2069
+ 	 * if not specified.  Really, this ought to be set at UDP open
+ 	 * time but hey, we didn't design this API.
+diff --git a/src/arch/i386/interface/pxe/pxe_undi.c b/src/arch/i386/interface/pxe/pxe_undi.c
+index 5d21226..b102759 100644
+--- a/src/arch/i386/interface/pxe/pxe_undi.c
++++ b/src/arch/i386/interface/pxe/pxe_undi.c
+@@ -36,10 +36,14 @@ FILE_LICENCE ( GPL2_OR_LATER );
+ #include <ipxe/pci.h>
+ #include <ipxe/if_ether.h>
+ #include <ipxe/ip.h>
++#include <ipxe/udp.h>
+ #include <ipxe/arp.h>
+ #include <ipxe/rarp.h>
+ #include "pxe.h"
+ 
++int running_pvs_nbp = 0;
++
++
+ /**
+  * Count of outstanding transmitted packets
+  *
+@@ -302,7 +306,7 @@ pxenv_undi_transmit ( struct s_PXENV_UNDI_TRANSMIT *undi_transmit ) {
+ 	struct DataBlk *datablk;
+ 	struct io_buffer *iobuf;
+ 	struct net_protocol *net_protocol;
+-	struct ll_protocol *ll_protocol;
++	struct ll_protocol *ll_protocol = pxe_netdev->ll_protocol;
+ 	char destaddr[MAX_LL_ADDR_LEN];
+ 	const void *ll_dest;
+ 	size_t len;
+@@ -380,7 +384,6 @@ pxenv_undi_transmit ( struct s_PXENV_UNDI_TRANSMIT *undi_transmit ) {
+ 	if ( net_protocol != NULL ) {
+ 
+ 		/* Calculate destination address */
+-		ll_protocol = pxe_netdev->ll_protocol;
+ 		if ( undi_transmit->XmitFlag == XMT_DESTADDR ) {
+ 			copy_from_real ( destaddr,
+ 					 undi_transmit->DestAddr.segment,
+@@ -412,6 +415,38 @@ pxenv_undi_transmit ( struct s_PXENV_UNDI_TRANSMIT *undi_transmit ) {
+ 	 */
+ 	undi_tx_count++;
+ 
++	/* Detect PVS */
++	while ( !running_pvs_nbp && ll_protocol
++		  && ll_protocol->ll_header_len == ETH_HLEN
++		  && iobuf->data + ETH_HLEN < iobuf->tail) {
++		struct ethhdr *eth = (struct ethhdr *) iobuf->data;
++		unsigned len = iobuf->tail - iobuf->data;
++
++		DBG ( "raw len %d\n", len );
++		/* check if IP packet */
++		if ( eth->h_protocol != htons(ETH_P_IP) )
++			break;
++
++		struct iphdr *ip = (struct iphdr *) &eth[1];
++		len -= ETH_HLEN;
++		DBG ( "ip packet len %d hdr %d proto %d\n", len, ip->verhdrlen, ip->protocol );
++
++		if ( len < 24
++		     || ip->verhdrlen != 0x45 /* IPv4 with 20 bytes header */
++		     || ip->protocol != IP_UDP )
++			break;
++
++
++		struct udp_header *udp = (struct udp_header *) ((char*) ip + 20);
++		DBG( "udp packet %d %d\n", udp->src, udp->dest );
++		if ( udp->src != htons( 6901 ) && udp->dest != htons( 6969 ) )
++			break;
++
++		running_pvs_nbp = 1;
++		DBG ( "detected PVS using UNDI\n" );
++		break;
++	}
++
+ 	/* Transmit packet */
+ 	DBGC2 ( &pxe_netdev, "\n" );
+ 	if ( ( rc = netdev_tx ( pxe_netdev, iobuf ) ) != 0 ) {
+@@ -905,8 +940,28 @@ static PXENV_EXIT_t pxenv_undi_isr ( struct s_PXENV_UNDI_ISR *undi_isr ) {
+ 		netdev_irq ( pxe_netdev, 0 );
+ 
+ 		break;
+-	case PXENV_UNDI_ISR_IN_PROCESS :
+ 	case PXENV_UNDI_ISR_IN_GET_NEXT :
++
++		/* If we are NOT running PVS network boot program
++		 * then GET_NEXT is handled the same as PROCESS.
++		 * For PVS NBPs GET_NEXT must NOT return a frame as
++		 * PVS ignores frames returned by GET_NEXT.
++		 */
++		if ( running_pvs_nbp ) {
++
++			/* We only ever return one frame at a time */
++			DBGC2 ( &pxenv_undi_isr, " GET_NEXT DONE (PVS)" );
++
++			/* Re-enable interrupts */
++			netdev_irq ( pxe_netdev, 1 );
++
++			undi_isr->FuncFlag = PXENV_UNDI_ISR_OUT_DONE;
++
++			break;
++		}
++		/* NOTE fall through if (!running_pvs_nbp) */
++
++	case PXENV_UNDI_ISR_IN_PROCESS :
+ 		DBGC2 ( &pxenv_undi_isr, " %s",
+ 			( ( undi_isr->FuncFlag == PXENV_UNDI_ISR_IN_PROCESS ) ?
+ 			  "PROCESS" : "GET_NEXT" ) );
