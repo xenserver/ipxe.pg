@@ -1,0 +1,264 @@
+diff --git a/src/arch/i386/core/relocate.c b/src/arch/i386/core/relocate.c
+index b9b0294..47450e7 100644
+--- a/src/arch/i386/core/relocate.c
++++ b/src/arch/i386/core/relocate.c
+@@ -42,7 +42,7 @@ extern char _etextdata[];
+  */
+ __asmcall void relocate ( struct i386_all_regs *ix86 ) {
+ 	struct memory_map memmap;
+-	unsigned long start, end, size, padded_size, max;
++	unsigned long start, end, size, padded_size;
+ 	unsigned long new_start, new_end;
+ 	unsigned i;
+ 
+@@ -57,13 +57,6 @@ __asmcall void relocate ( struct i386_all_regs *ix86 ) {
+ 	      "...need %lx bytes for %d-byte alignment\n",
+ 	      start, end, padded_size, max_align );
+ 
+-	/* Determine maximum usable address */
+-	max = MAX_ADDR;
+-	if ( ix86->regs.ebp && ( ix86->regs.ebp < max ) ) {
+-		max = ix86->regs.ebp;
+-		DBG ( "Limiting relocation to [0,%lx)\n", max );
+-	}
+-
+ 	/* Walk through the memory map and find the highest address
+ 	 * below 4GB that iPXE will fit into.
+ 	 */
+@@ -74,18 +67,18 @@ __asmcall void relocate ( struct i386_all_regs *ix86 ) {
+ 
+ 		DBG ( "Considering [%llx,%llx)\n", region->start, region->end);
+ 		
+-		/* Truncate block to maximum address.  This will be
+-		 * less than 4GB, which means that we can get away
+-		 * with using just 32-bit arithmetic after this stage.
++		/* Truncate block to MAX_ADDR.  This will be less than
++		 * 4GB, which means that we can get away with using
++		 * just 32-bit arithmetic after this stage.
+ 		 */
+-		if ( region->start > max ) {
+-			DBG ( "...starts after max=%lx\n", max );
++		if ( region->start > MAX_ADDR ) {
++			DBG ( "...starts after MAX_ADDR=%lx\n", MAX_ADDR );
+ 			continue;
+ 		}
+ 		r_start = region->start;
+-		if ( region->end > max ) {
+-			DBG ( "...end truncated to max=%lx\n", max );
+-			r_end = max;
++		if ( region->end > MAX_ADDR ) {
++			DBG ( "...end truncated to MAX_ADDR=%lx\n", MAX_ADDR );
++			r_end = MAX_ADDR;
+ 		} else {
+ 			r_end = region->end;
+ 		}
+diff --git a/src/arch/i386/prefix/exeprefix.S b/src/arch/i386/prefix/exeprefix.S
+index acd3f83..0d3367a 100644
+--- a/src/arch/i386/prefix/exeprefix.S
++++ b/src/arch/i386/prefix/exeprefix.S
+@@ -114,7 +114,7 @@ _exe_start:
+ 	call	alloc_basemem
+ 	xorl	%esi, %esi
+ 	movl	$EXE_DECOMPRESS_ADDRESS, %edi
+-	xorl	%ebp, %ebp
++	clc
+ 	call	install_prealloc
+ 
+ 	/* Set up real-mode stack */
+diff --git a/src/arch/i386/prefix/libprefix.S b/src/arch/i386/prefix/libprefix.S
+index 2f8fc4e..fd4b249 100644
+--- a/src/arch/i386/prefix/libprefix.S
++++ b/src/arch/i386/prefix/libprefix.S
+@@ -327,6 +327,7 @@ process_bytes:
+ #ifndef KEEP_IT_REAL
+ 
+ 	/* Preserve registers */
++	pushfw
+ 	pushl	%eax
+ 	pushl	%ebp
+ 
+@@ -397,6 +398,7 @@ process_bytes:
+ 	/* Restore registers and return */
+ 	popl	%ebp
+ 	popl	%eax
++	popfw
+ 	ret
+ 
+ #else /* KEEP_IT_REAL */
+@@ -613,19 +615,17 @@ install:
+ 	/* Preserve registers */
+ 	pushl	%esi
+ 	pushl	%edi
+-	pushl	%ebp
+ 	/* Allocate space for .text16 and .data16 */
+ 	call	alloc_basemem
+ 	/* Image source = %cs:0000 */
+ 	xorl	%esi, %esi
+ 	/* Image destination = default */
+ 	xorl	%edi, %edi
+-	/* Allow arbitrary relocation */
+-	xorl	%ebp, %ebp
++	/* Allow relocation */
++	clc
+ 	/* Install text and data segments */
+ 	call	install_prealloc
+ 	/* Restore registers and return */
+-	popl	%ebp
+ 	popl	%edi
+ 	popl	%esi
+ 	ret
+@@ -641,7 +641,7 @@ install:
+  *   %bx  : .data16 segment address
+  *   %esi : Image source physical address (or zero for %cs:0000)
+  *   %edi : Decompression temporary area physical address (or zero for default)
+- *   %ebp : Maximum end address for relocation (or zero for no maximum)
++ *   CF set : Avoid relocating to top of memory
+  * Corrupts:
+  *   none
+  ****************************************************************************
+@@ -656,6 +656,7 @@ install_prealloc:
+ 	pushw	%ds
+ 	pushw	%es
+ 	cld			/* Sanity: clear the direction flag asap */
++	pushfw
+ 
+ 	/* Set up %ds for (read-only) access to .prefix */
+ 	pushw	%cs
+@@ -795,6 +796,11 @@ payload_death_message:
+ 	movw	%ax, (init_librm_vector+2)
+ 	lcall	*init_librm_vector
+ 
++	/* Skip relocation if CF was set on entry */
++	popfw
++	pushfw
++	jc	skip_relocate
++
+ 	/* Call relocate() to determine target address for relocation.
+ 	 * relocate() will return with %esi, %edi and %ecx set up
+ 	 * ready for the copy to the new location.
+@@ -817,6 +823,7 @@ payload_death_message:
+ 	/* Initialise librm at new location */
+ 	progress "  init_librm\n"
+ 	lcall	*init_librm_vector
++skip_relocate:
+ #endif
+ 
+ 	/* Close access to payload */
+@@ -825,6 +832,7 @@ payload_death_message:
+ 	lcall	*close_payload_vector
+ 
+ 	/* Restore registers */
++	popfw
+ 	popw	%es
+ 	popw	%ds
+ 	popal
+diff --git a/src/arch/i386/prefix/romprefix.S b/src/arch/i386/prefix/romprefix.S
+index 35d037e..89d93f7 100644
+--- a/src/arch/i386/prefix/romprefix.S
++++ b/src/arch/i386/prefix/romprefix.S
+@@ -445,7 +445,7 @@ no_pmm:
+ 	 * picked up by the initial shell prompt, and we will drop
+ 	 * into a shell.
+ 	 */
+-	movl	$0xa0000, %ebp	/* Inhibit relocation during POST */
++	stc			/* Inhibit relocation */
+ 	pushw	%cs
+ 	call	exec
+ 2:
+@@ -630,7 +630,7 @@ decompress_to:
+  * Called by the PnP BIOS when it wants to boot us.
+  */
+ bev_entry:
+-	xorl	%ebp, %ebp	/* Allow relocation */
++	clc			/* Allow relocation */
+ 	pushw	%cs
+ 	call	exec
+ 	lret
+@@ -665,7 +665,7 @@ int19_entry:
+ 	/* Leave keypress in buffer and start iPXE.  The keypress will
+ 	 * cause the usual initial Ctrl-B prompt to be skipped.
+ 	 */
+-	xorl	%ebp, %ebp	/* Allow relocation */
++	clc			/* Allow relocation */
+ 	pushw	%cs
+ 	call	exec
+ 1:	/* Try to call original INT 19 vector */
+@@ -697,6 +697,9 @@ exec:	/* Set %ds = %cs */
+ 	pushw	%cs
+ 	popw	%ds
+ 
++	/* Preserve state of CF */
++	lahf
++
+ 	/* Print message as soon as possible */
+ 	movw	$prodstr, %si
+ 	xorw	%di, %di
+@@ -706,8 +709,8 @@ exec:	/* Set %ds = %cs */
+ 
+ 	/* Store magic word on BIOS stack and remember BIOS %ss:sp */
+ 	pushl	$STACK_MAGIC
+-	movw	%ss, %cx
+-	movw	%sp, %dx
++	movw	%ss, %dx
++	movw	%sp, %bp
+ 
+ 	/* Obtain a reasonably-sized temporary stack */
+ 	xorw	%bx, %bx
+@@ -715,7 +718,10 @@ exec:	/* Set %ds = %cs */
+ 	movw	$0x7c00, %sp
+ 
+ 	/* Install iPXE */
++	sahf
++	pushfw
+ 	call	alloc_basemem
++	popfw
+ 	movl	image_source, %esi
+ 	movl	decompress_to, %edi
+ 	call	install_prealloc
+@@ -738,14 +744,14 @@ exec:	/* Set %ds = %cs */
+ 	pushl	$main
+ 	pushw	%cs
+ 	call	prot_call
+-	popl	%eax /* discard */
++	popl	%ecx /* discard */
+ 
+ 	/* Uninstall iPXE */
+ 	call	uninstall
+ 
+ 	/* Restore BIOS stack */
+-	movw	%cx, %ss
+-	movw	%dx, %sp
++	movw	%dx, %ss
++	movw	%bp, %sp
+ 
+ 	/* Check magic word on BIOS stack */
+ 	popl	%eax
+diff --git a/src/arch/i386/prefix/undiloader.S b/src/arch/i386/prefix/undiloader.S
+index bb3d469..951b5c1 100644
+--- a/src/arch/i386/prefix/undiloader.S
++++ b/src/arch/i386/prefix/undiloader.S
+@@ -14,7 +14,6 @@ undiloader:
+ 	/* Save registers */
+ 	pushl	%esi
+ 	pushl	%edi
+-	pushl	%ebp
+ 	pushw	%ds
+ 	pushw	%es
+ 	pushw	%bx
+@@ -31,7 +30,7 @@ undiloader:
+ 	movw	%es:14(%di), %ax
+ 	movl	image_source, %esi
+ 	movl	decompress_to, %edi
+-	xorl	%ebp, %ebp		/* Allow relocation */
++	clc			/* Allow relocation */
+ 	call	install_prealloc
+ 	popw	%di
+ 	/* Call UNDI loader C code */
+@@ -47,7 +46,6 @@ undiloader:
+ 	popw	%bx
+ 	popw	%es
+ 	popw	%ds
+-	popl	%ebp
+ 	popl	%edi
+ 	popl	%esi
+ 	lret
