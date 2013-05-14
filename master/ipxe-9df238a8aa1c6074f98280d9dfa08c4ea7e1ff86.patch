@@ -1,0 +1,28 @@
+[romprefix] Fix incorrect pointer offset in undiloader.S
+
+Commit 2422647 ("[prefix] Allow prefix to specify an arbitrary maximum
+address for relocation") introduced a regression into the UNDI ROM
+loader by preserving an extra register on the stack without modifying
+the %sp-relative addresses used in the routine.
+
+Fix by correcting the %sp-relative addresses to allow for the extra
+preserved variable.
+
+Signed-off-by: Frediano Ziglio <frediano.ziglio@citrix.com>
+Signed-off-by: Michael Brown <mcb30@ipxe.org>
+
+diff --git a/src/arch/i386/prefix/undiloader.S b/src/arch/i386/prefix/undiloader.S
+index bb3d469..315a009 100644
+--- a/src/arch/i386/prefix/undiloader.S
++++ b/src/arch/i386/prefix/undiloader.S
+@@ -23,8 +23,8 @@ undiloader:
+ 	popw	%ds
+ 	/* UNDI loader parameter structure address into %es:%di */
+ 	movw	%sp, %bx
+-	movw	%ss:18(%bx), %di
+-	movw	%ss:20(%bx), %es
++	movw	%ss:22(%bx), %di
++	movw	%ss:24(%bx), %es
+ 	/* Install to specified real-mode addresses */
+ 	pushw	%di
+ 	movw	%es:12(%di), %bx
