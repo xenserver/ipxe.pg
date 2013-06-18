@@ -1,0 +1,15 @@
+diff --git a/Makefile b/Makefile
+new file mode 100644
+index 0000000..ed01b34
+--- /dev/null
++++ b/Makefile
+@@ -0,0 +1,9 @@
++SHELL := /bin/bash
++
++source-archive: ipxe.tar.gz
++
++ipxe.tar.gz:
++	set -e; set -o pipefail ;\
++	git archive --format=tar --prefix=ipxe/ HEAD | gzip -9 > $@.tmp ;\
++	mv $@.tmp $@
++

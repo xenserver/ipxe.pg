@@ -1,3 +1,4 @@
+makefile.patch
 ipxe-9df238a8aa1c6074f98280d9dfa08c4ea7e1ff86.patch
 pxe-tftp-load-from-program-pxecall.patch
 ipxe-do-not-implement-UNDI-GET_NEXT-if-PVS.patch
