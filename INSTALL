@@ -1,0 +1,14 @@
+iPXE is compiled as part of Xen component.
+Here all you need to do is create an archive to fed to Xen.
+
+Requirement:
+  * git
+  * guilt
+
+Follow these steps to build a ipxe.tar.gz file:
+
+1. Clone the ipxe repository to /some/path/ipxe/
+2. Clone ipxe patch queue repository to /some/path/ipxe/.git/patches/
+3. cd /some/path/ipxe and then do a `guilt push -a` to apply the patches
+4. Archive with git archive --format=tar --prefix=ipxe/ HEAD | gzip -9 > ipxe.tar.gz
+

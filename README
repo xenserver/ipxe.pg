@@ -1,0 +1,4 @@
+This is the repository of XenServer-specific patches to iPXE.
+
+To contribute bug fixes, email them to the XenServer development mailing
+list (xs-devel@lists.xenserver.org).
