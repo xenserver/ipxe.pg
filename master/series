@@ -1,5 +1,6 @@
 makefile.patch
 ipxe-9df238a8aa1c6074f98280d9dfa08c4ea7e1ff86.patch
+ipxe-eb5a2ba5962579e514b377f5fdab7292be0fb2a7.patch
 pxe-tftp-load-from-program-pxecall.patch
 ipxe-do-not-implement-UNDI-GET_NEXT-if-PVS.patch
 ipxe-udp-write-blocking.patch

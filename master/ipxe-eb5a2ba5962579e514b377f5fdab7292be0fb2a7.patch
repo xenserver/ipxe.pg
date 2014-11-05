@@ -1,0 +1,35 @@
+From: Daniel P. Berrange <berrange@redhat.com>
+Date: Tue, 5 Mar 2013 15:18:20 +0000 (+0000)
+Subject: [zbin] Fix size used for memset in alloc_output_file
+X-Git-Url: https://git.ipxe.org
+
+[zbin] Fix size used for memset in alloc_output_file
+
+The output->buf field is a pointer, not an array, so sizeof() is not
+applicable.  We must use the allocated string length instead.
+
+Identified by gcc:
+
+  util/zbin.c: In function ‘alloc_output_file’:
+  util/zbin.c:146:37: warning: argument to ‘sizeof’ in ‘memset’ call
+    is the same expression as the destination; did you mean to
+    dereference it? [-Wsizeof-pointer-memaccess]
+  memset ( output->buf, 0xff, sizeof ( output->buf ) );
+
+Signed-off-by: Daniel P. Berrange <berrange@redhat.com>
+Signed-off-by: Michael Brown <mcb30@ipxe.org>
+---
+
+diff --git a/src/util/zbin.c b/src/util/zbin.c
+index 0dabaf1..3b7cf95 100644
+--- a/src/util/zbin.c
++++ b/src/util/zbin.c
+@@ -143,7 +143,7 @@ static int alloc_output_file ( size_t max_len, struct output_file *output ) {
+ 			  max_len );
+ 		return -1;
+ 	}
+-	memset ( output->buf, 0xff, sizeof ( output->buf ) );
++	memset ( output->buf, 0xff, max_len );
+ 	return 0;
+ }
+ 
