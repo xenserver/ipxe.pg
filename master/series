@@ -1,6 +1,7 @@
 makefile.patch
-ipxe-9df238a8aa1c6074f98280d9dfa08c4ea7e1ff86.patch
 ipxe-eb5a2ba5962579e514b377f5fdab7292be0fb2a7.patch
+ipxe-9df238a8aa1c6074f98280d9dfa08c4ea7e1ff86.patch
+ipxe-66ea4581256449fe9dcb26340851c09ffd9d6290.patch
 # 08bcc0fe0169fa369dee2810d45e5c6b43a94b97
 0001-dhcp-Check-for-matching-chaddr-in-received-DHCP-pack.patch
 
