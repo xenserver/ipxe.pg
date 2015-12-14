@@ -6,7 +6,7 @@ Tried to upstream but got refused
 Signed-off-by: Frediano Ziglio <frediano.ziglio@citrix.com>
 
 diff --git a/src/arch/i386/interface/pxe/pxe_udp.c b/src/arch/i386/interface/pxe/pxe_udp.c
-index 83c5b2a..522acae 100644
+index eed94ad..e1b2778 100644
 --- a/src/arch/i386/interface/pxe/pxe_udp.c
 +++ b/src/arch/i386/interface/pxe/pxe_udp.c
 @@ -11,6 +11,7 @@
@@ -17,10 +17,10 @@ index 83c5b2a..522acae 100644
  #include <pxe.h>
  
  /*
-@@ -42,6 +43,10 @@ struct pxe_udp_connection {
+@@ -54,6 +55,10 @@ struct pxe_udp_connection {
  	struct sockaddr_in local;
- 	/** Current PXENV_UDP_READ parameter block */
- 	struct s_PXENV_UDP_READ *pxenv_udp_read;
+ 	/** List of received packets */
+ 	struct list_head list;
 +	/** Current PXENV_UDP_WRITE parameter block */
 +	struct s_PXENV_UDP_WRITE *pxenv_udp_write;
 +	/** return from write */
@@ -28,7 +28,7 @@ index 83c5b2a..522acae 100644
  };
  
  /**
-@@ -216,6 +221,74 @@ pxenv_udp_close ( struct s_PXENV_UDP_CLOSE *pxenv_udp_close ) {
+@@ -231,6 +236,74 @@ pxenv_udp_close ( struct s_PXENV_UDP_CLOSE *pxenv_udp_close ) {
  
  extern int running_pvs_nbp;
  
@@ -103,7 +103,7 @@ index 83c5b2a..522acae 100644
  /**
   * UDP WRITE
   *
-@@ -259,25 +332,11 @@ extern int running_pvs_nbp;
+@@ -274,25 +347,11 @@ extern int running_pvs_nbp;
   */
  static PXENV_EXIT_t
  pxenv_udp_write ( struct s_PXENV_UDP_WRITE *pxenv_udp_write ) {
@@ -130,7 +130,7 @@ index 83c5b2a..522acae 100644
  	/* Detect PVS */
  	if ( !running_pvs_nbp && (pxenv_udp_write->src_port == htons ( 6901 ) ||
  	     pxenv_udp_write->dst_port == htons ( 6969 ) ) ) {
-@@ -293,31 +352,20 @@ pxenv_udp_write ( struct s_PXENV_UDP_WRITE *pxenv_udp_write ) {
+@@ -308,31 +367,20 @@ pxenv_udp_write ( struct s_PXENV_UDP_WRITE *pxenv_udp_write ) {
  	if ( ! pxe_udp.local.sin_port )
  		pxe_udp.local.sin_port = htons ( 2069 );
  
