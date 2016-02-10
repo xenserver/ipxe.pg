@@ -13,3 +13,94 @@ index 0000000..ed01b34
 +	git archive --format=tar --prefix=ipxe/ HEAD | gzip -9 > $@.tmp ;\
 +	mv $@.tmp $@
 +
+diff --git a/mk/Makefile b/mk/Makefile
+new file mode 100644
+index 0000000..a125d9c
+--- /dev/null
++++ b/mk/Makefile
+@@ -0,0 +1,58 @@
++# makefile for ipxe component in build system
++include $(B_BASE)/common.mk
++include $(B_BASE)/rpmbuild.mk
++
++.PHONY: %var
++%var:
++	@echo "$* = $($*)"
++
++REPO_NAME := ipxe-source
++IPXE_REPO_NAME := ipxe
++RPM_BUILD_COOKIE := $(MY_OBJ_DIR)/.rpm_build_cookie
++
++IPXE_VERSION := 1
++IPXE_RELEASE := 0
++
++.PHONY: build
++build: $(RPM_BUILD_COOKIE) $(MY_OUTPUT_DIR)/$(REPO_NAME).inc
++	@ :
++
++SOURCES := $(RPM_SOURCESDIR)/ipxe.tar.gz
++SOURCES += $(RPM_SPECSDIR)/ipxe-source.spec
++
++$(RPM_SOURCESDIR)/ipxe.tar.gz: $(RPM_SOURCESDIR)/.dirstamp
++	{ set -e; set -o pipefail; \
++	cd "$(call git_loc,$(IPXE_REPO_NAME))"; \
++	git archive --format=tar --prefix=ipxe/ HEAD | gzip -9 > $@.tmp; \
++	mv -f $@.tmp $@; \
++	}
++
++$(RPM_SPECSDIR)/$(REPO_NAME).spec: $(REPO_NAME).spec.in
++	{ set -e; set -o pipefail; \
++	sed -e s/@IPXE_VERSION@/$(IPXE_VERSION)/g \
++	    -e s/@IPXE_RELEASE@/$(IPXE_RELEASE)/g \
++	< $< > $@.tmp; \
++	mv -f $@.tmp $@; \
++	}
++
++$(RPM_BUILD_COOKIE): $(RPM_DIRECTORIES) $(SOURCES)
++	$(RPMBUILD) --target $(DOMAIN0_ARCH_OPTIMIZED) -ba $(RPM_SPECSDIR)/$(REPO_NAME).spec
++	touch $@
++
++.PHONY: $(MY_OUTPUT_DIR)/$(REPO_NAME).inc
++$(MY_OUTPUT_DIR)/$(REPO_NAME).inc: $(MY_OUTPUT_DIRSTAMP)
++	{ set -e; set -o pipefail; \
++	{ echo IPXE_PKG_NAME := $(REPO_NAME); \
++	  echo IPXE_PKG_VERSION := $(IPXE_VERSION)-$(IPXE_RELEASE); \
++	  echo IPXE_PKG_ARCH := $(DOMAIN0_ARCH_OPTIMIZED); \
++	  echo IPXE_PKG_FILE := RPMS/$(DOMAIN0_ARCH_OPTIMIZED)/$(OUTPUT_RPM); \
++	} > $@.tmp; \
++	mv -f $@.tmp $@; \
++	}
++
++.PHONY: clean
++clean:
++	rm -f $(RPM_BUILD_COOKIE)
++	rm -f $(SOURCES)
++	rm -f $(SOURCES:%=%.tmp)
++	rm -f $(MY_OUTPUT_DIR)/$(REPO_NAME).inc
+diff --git a/mk/ipxe-source.spec.in b/mk/ipxe-source.spec.in
+new file mode 100644
+index 0000000..1322cd0
+--- /dev/null
++++ b/mk/ipxe-source.spec.in
+@@ -0,0 +1,21 @@
++Summary : iPXE source archive
++Name: ipxe-source
++Version: @IPXE_VERSION@
++Release: @IPXE_RELEASE@
++License: GPLv2
++Source0: ipxe.tar.gz
++BuildArch: noarch
++
++%description
++Ipxe specfile
++
++%install
++mkdir -p %{buildroot}/usr/src
++cp %{SOURCE0} %{buildroot}/usr/src/%{name}.tar.gz
++
++%clean
++rm -rf $RPM_BUILD_ROOT
++
++%files
++%defattr(-,root,root)
++/usr/src/%{name}.tar.gz
