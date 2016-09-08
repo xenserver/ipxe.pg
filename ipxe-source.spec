@@ -5,7 +5,7 @@ Name: ipxe-source
 Version: 1
 Release: 1
 License: GPLv2
-Source0: http://hg.uk.xensource.com/git/carbon/trunk-ring0/ipxe.git/snapshot/refs/heads/master#/%{src_name}.tar.gz
+Source0: http://hg.uk.xensource.com/git/carbon/%{branch}/ipxe.git/snapshot/refs/heads/master#/%{src_name}.tar.gz
 BuildArch: noarch
 
 %description
