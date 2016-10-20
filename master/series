@@ -11,3 +11,10 @@ pxe-tftp-load-from-program-pxecall.patch
 ipxe-do-not-implement-UNDI-GET_NEXT-if-PVS.patch
 ipxe-udp-write-blocking.patch
 ipxe-no-post-prompt.patch
+
+# CA-211827: ipxe workaround when ProxyDHCP servers and PXE boot
+# servers do not specify a DHCP server identifier via option 54
+0001-dhcp-Remove-obsolete-dhcp_chaddr-function.patch
+0002-dhcp-Allow-pseudo-DHCP-servers-to-use-pseudo-identif.patch
+0003-dhcp-Ignore-ProxyDHCPACKs-without-PXE-options.patch
+0004-dhcp-Do-not-skip-ProxyDHCPREQUEST-if-next-server-is-.patch

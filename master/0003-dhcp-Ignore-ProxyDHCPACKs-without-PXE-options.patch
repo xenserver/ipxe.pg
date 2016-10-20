@@ -1,0 +1,36 @@
+From 0a34c2aab9951bf571a5093a5a8d0f6d1f5ca107 Mon Sep 17 00:00:00 2001
+From: Michael Brown <mcb30@ipxe.org>
+Date: Tue, 18 Aug 2015 17:18:38 +0100
+Subject: [PATCH] [dhcp] Ignore ProxyDHCPACKs without PXE options
+
+Suggested-by: Wissam Shoukair <wissams@mellanox.com>
+Signed-off-by: Michael Brown <mcb30@ipxe.org>
+---
+ src/net/udp/dhcp.c |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/net/udp/dhcp.c b/src/net/udp/dhcp.c
+index 7d5237b..aed5ee3 100644
+--- a/src/net/udp/dhcp.c
++++ b/src/net/udp/dhcp.c
+@@ -670,6 +670,8 @@ static void dhcp_proxy_rx ( struct dhcp_session *dhcp,
+ 		DBGC ( dhcp, " (%s/", inet_ntoa ( server_id ) );
+ 		DBGC ( dhcp, "%s)", inet_ntoa ( pseudo_id ) );
+ 	}
++	if ( dhcp_has_pxeopts ( dhcppkt ) )
++		DBGC ( dhcp, " pxe" );
+ 	DBGC ( dhcp, "\n" );
+ 
+ 	/* Filter out unacceptable responses */
+@@ -679,6 +681,8 @@ static void dhcp_proxy_rx ( struct dhcp_session *dhcp,
+ 		return;
+ 	if ( ( pseudo_id.s_addr != dhcp->proxy_server.s_addr ) )
+ 		return;
++	if ( ! dhcp_has_pxeopts ( dhcppkt ) )
++		return;
+ 
+ 	/* Register settings */
+ 	if ( ( rc = register_settings ( settings, NULL,
+-- 
+1.7.10.4
+
